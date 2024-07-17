@@ -1,1 +1,1 @@
-# django-mogdb-backend
+# django-opengauss-backend
