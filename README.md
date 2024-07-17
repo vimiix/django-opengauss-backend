@@ -7,9 +7,15 @@ openGauss database dialect for django
 - openGauss pysocpg2
 - django >= 1.8
 
-## Django settings
+## Install
 
-You can set the name in your settings.py as:
+```shell
+pip install django-opengauss-backend
+```
+
+## Usage
+
+You can set the name in your Django project `settings.py` as:
 
 ```python
 DATABASES = {

@@ -5,6 +5,7 @@ setup(
     version='0.1.0',
     description='openGauss database dialect for django',
     long_description=open("README.md").read(),
+    long_description_content_type='text/markdown',
     author='Vimiix',
     author_email='i@vimiix.com',
     license="MIT",
@@ -13,7 +14,7 @@ setup(
     include_package_data=True,
     zip_safe=False,
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 5 - Production/Stable",
         "Framework :: Django",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
