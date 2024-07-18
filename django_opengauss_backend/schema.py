@@ -4,6 +4,8 @@ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.backends.ddl_references import IndexColumns
 from django.db.backends.utils import strip_quotes
 
+from .compat import IS_DJANGO_32, IS_DJANGO_42
+
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     sql_create_sequence = "CREATE SEQUENCE %(sequence)s"
@@ -13,14 +15,20 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     )
     sql_set_sequence_owner = "ALTER SEQUENCE %(sequence)s OWNED BY %(table)s.%(column)s"
 
-    sql_create_index = (
-        "CREATE INDEX %(name)s ON %(table)s%(using)s "
-        "(%(columns)s)%(include)s%(extra)s%(condition)s"
-    )
-    sql_create_index_concurrently = (
-        "CREATE INDEX CONCURRENTLY %(name)s ON %(table)s%(using)s "
-        "(%(columns)s)%(include)s%(extra)s%(condition)s"
-    )
+
+    if IS_DJANGO_32:
+        sql_create_index = (
+            "CREATE INDEX %(name)s ON %(table)s%(using)s "
+            "(%(columns)s)%(include)s%(extra)s%(condition)s"
+        )
+        sql_create_index_concurrently = (
+            "CREATE INDEX CONCURRENTLY %(name)s ON %(table)s%(using)s "
+            "(%(columns)s)%(include)s%(extra)s%(condition)s"
+        )
+    else:
+        sql_create_index = "CREATE INDEX %(name)s ON %(table)s%(using)s (%(columns)s)%(extra)s%(condition)s"
+        sql_create_index_concurrently = sql_create_index
+
     sql_delete_index = "DROP INDEX IF EXISTS %(name)s"
     sql_delete_index_concurrently = "DROP INDEX CONCURRENTLY IF EXISTS %(name)s"
 
@@ -101,7 +109,23 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
                 )
         return None
 
-    def _alter_column_type_sql(self, model, old_field, new_field, new_type):
+    def _using_sql(self, new_field, old_field):
+        using_sql = " USING %(column)s::%(type)s"
+        new_internal_type = new_field.get_internal_type()
+        old_internal_type = old_field.get_internal_type()
+        if new_internal_type == "ArrayField" and new_internal_type == old_internal_type:
+            # Compare base data types for array fields.
+            if list(self._field_base_data_types(old_field)) != list(
+                self._field_base_data_types(new_field)
+            ):
+                return using_sql
+        elif self._field_data_type(old_field) != self._field_data_type(new_field):
+            return using_sql
+        return ""
+
+    def _alter_column_type_sql(self, model, old_field, new_field, new_type,
+                               # these two args added in Django 4.2
+                               old_collation=None, new_collation=None):
         self.sql_alter_column_type = "ALTER COLUMN %(column)s TYPE %(type)s"
         # Cast when data type changed.
         using_sql = " USING %(column)s::%(type)s"
@@ -189,9 +213,10 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             # Drop the sequence if migrating away from AutoField.
             column = strip_quotes(new_field.column)
             sequence_name = "%s_%s_seq" % (table, column)
-            fragment, _ = super()._alter_column_type_sql(
-                model, old_field, new_field, new_type
-            )
+            args = [model, old_field, new_field, new_type]
+            if IS_DJANGO_42:
+                args.extend([old_collation, new_collation])
+            fragment, _ = super()._alter_column_type_sql(*args)
             return fragment, [
                 (
                     self.sql_delete_sequence
@@ -202,7 +227,10 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
                 ),
             ]
         else:
-            return super()._alter_column_type_sql(model, old_field, new_field, new_type)
+            args = [model, old_field, new_field, new_type]
+            if IS_DJANGO_42:
+                args.extend([old_collation, new_collation])
+            return super()._alter_column_type_sql(*args)
 
     def _alter_field(
         self,
@@ -282,7 +310,6 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     def _create_index_sql(
         self,
         model,
-        *,
         fields=None,
         name=None,
         suffix="",
@@ -301,17 +328,21 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             if not concurrently
             else self.sql_create_index_concurrently
         )
+        kwargs = {
+            'fields': fields,
+            'name': name,
+            'suffix': suffix,
+            'using': using,
+            'db_tablespace': db_tablespace,
+            'col_suffixes':col_suffixes,
+            'sql':sql,
+            'opclasses': opclasses,
+            'condition': condition,
+        }
+        if IS_DJANGO_32:
+            kwargs['include'] = include
+            kwargs['expressions'] = expressions
         return super()._create_index_sql(
             model,
-            fields=fields,
-            name=name,
-            suffix=suffix,
-            using=using,
-            db_tablespace=db_tablespace,
-            col_suffixes=col_suffixes,
-            sql=sql,
-            opclasses=opclasses,
-            condition=condition,
-            include=include,
-            expressions=expressions,
+            **kwargs
         )

@@ -5,7 +5,7 @@ openGauss database dialect for django
 ## Requirements
 
 - openGauss pysocpg2
-- django >= 1.8
+- django >= 2.2
 
 ## Install
 

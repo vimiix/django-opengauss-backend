@@ -2,7 +2,24 @@ from psycopg2.extras import Inet
 
 from django.conf import settings
 from django.db.backends.base.operations import BaseDatabaseOperations
-from django.db.backends.utils import split_tzname_delta
+
+try:
+    # added from django 4.0
+    from django.db.backends.utils import split_tzname_delta
+except ImportError:
+    from django.utils.dateparse import parse_time
+    def split_tzname_delta(tzname):
+        """
+        Split a time zone name into a 3-tuple of (name, sign, offset).
+        """
+        for sign in ["+", "-"]:
+            if sign in tzname:
+                name, offset = tzname.rsplit(sign, 1)
+                if offset and parse_time(offset):
+                    if ":" not in offset:
+                        offset = f"{offset}:00"
+                    return name, sign, offset
+        return tzname, None, None
 
 
 class DatabaseOperations(BaseDatabaseOperations):

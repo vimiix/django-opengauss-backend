@@ -7,6 +7,8 @@ Requires psycopg2 for openGauss
 import asyncio
 import threading
 import warnings
+import functools
+import os
 from contextlib import contextmanager
 
 from django.conf import settings
@@ -15,10 +17,43 @@ from django.db import DatabaseError as WrappedDatabaseError
 from django.db import connections
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.backends.utils import CursorDebugWrapper as BaseCursorDebugWrapper
-from django.utils.asyncio import async_unsafe
 from django.utils.functional import cached_property
 from django.utils.safestring import SafeString
-from django.utils.version import get_version_tuple
+
+try:
+    # add from django 3.0
+    from django.utils.asyncio import async_unsafe
+except ImportError:
+    class SynchronousOnlyOperation(Exception):
+        """The user tried to call a sync-only function from an async context."""
+        pass
+
+    def async_unsafe(message):
+        """
+        Decorator to mark functions as async-unsafe. Someone trying to access
+        the function while in an async context will get an error message.
+        """
+        def decorator(func):
+            @functools.wraps(func)
+            def inner(*args, **kwargs):
+                if not os.environ.get('DJANGO_ALLOW_ASYNC_UNSAFE'):
+                    # Detect a running event loop in this thread.
+                    try:
+                        asyncio.get_running_loop()
+                    except RuntimeError:
+                        pass
+                    else:
+                        raise SynchronousOnlyOperation(message)
+                # Pass onward.
+                return func(*args, **kwargs)
+            return inner
+        # If the message is actually a function, then be a no-arguments decorator.
+        if callable(message):
+            func = message
+            message = 'You cannot call this from an async context - use a thread or sync_to_async.'
+            return decorator(func)
+        else:
+            return decorator
 
 try:
     import psycopg2 as Database
