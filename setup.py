@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='django-opengauss-backend',
-    version='0.1.0',
+    version='0.2.0',
     description='openGauss database dialect for django',
     long_description=open("README.md").read(),
     long_description_content_type='text/markdown',
@@ -10,7 +10,7 @@ setup(
     author_email='i@vimiix.com',
     license="MIT",
     url='https://github.com/vimiix/django-opengauss-backend',
-    packages=['django-opengauss-backend'],
+    packages=['django_opengauss_backend'],
     include_package_data=True,
     zip_safe=False,
     classifiers=[
