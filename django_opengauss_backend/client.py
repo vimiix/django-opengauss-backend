@@ -1,87 +1,64 @@
-import sys
+import signal
 
-from psycopg2 import errorcodes
-
-from django.core.exceptions import ImproperlyConfigured
-from django.db.backends.base.creation import BaseDatabaseCreation
-from django.db.backends.utils import strip_quotes
+from django.db.backends.base.client import BaseDatabaseClient
 
 
-class DatabaseCreation(BaseDatabaseCreation):
-    def _quote_name(self, name):
-        return self.connection.ops.quote_name(name)
+class DatabaseClient(BaseDatabaseClient):
+    executable_name = "gsql"
 
-    def _get_database_create_suffix(self, encoding=None, template=None):
-        suffix = ""
-        if encoding:
-            suffix += " ENCODING '{}'".format(encoding)
-        if template:
-            suffix += " TEMPLATE {}".format(self._quote_name(template))
-        return suffix and "WITH" + suffix
+    @classmethod
+    def settings_to_cmd_args_env(cls, settings_dict, parameters):
+        args = [cls.executable_name]
+        options = settings_dict.get("OPTIONS", {})
 
-    def sql_table_creation_suffix(self):
-        test_settings = self.connection.settings_dict["TEST"]
-        if test_settings.get("COLLATION") is not None:
-            raise ImproperlyConfigured(
-                "openGauss does not support collation setting at database "
-                "creation time."
-            )
-        return self._get_database_create_suffix(
-            encoding=test_settings["CHARSET"],
-            template=test_settings.get("TEMPLATE"),
-        )
+        host = settings_dict.get("HOST")
+        port = settings_dict.get("PORT")
+        dbname = settings_dict.get("NAME")
+        user = settings_dict.get("USER")
+        passwd = settings_dict.get("PASSWORD")
+        passfile = options.get("passfile")
+        service = options.get("service")
+        sslmode = options.get("sslmode")
+        sslrootcert = options.get("sslrootcert")
+        sslcert = options.get("sslcert")
+        sslkey = options.get("sslkey")
 
-    def _database_exists(self, cursor, database_name):
-        cursor.execute(
-            "SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s",
-            [strip_quotes(database_name)],
-        )
-        return cursor.fetchone() is not None
+        if not dbname and not service:
+            # Connect to the default 'postgres' db.
+            dbname = "postgres"
+        if user:
+            args += ["-U", user]
+        if host:
+            args += ["-h", host]
+        if port:
+            args += ["-p", str(port)]
+        if dbname:
+            args += [dbname]
+        args.extend(parameters)
 
-    def _execute_create_test_db(self, cursor, parameters, keepdb=False):
+        env = {}
+        if passwd:
+            env["PGPASSWORD"] = str(passwd)
+        if service:
+            env["PGSERVICE"] = str(service)
+        if sslmode:
+            env["PGSSLMODE"] = str(sslmode)
+        if sslrootcert:
+            env["PGSSLROOTCERT"] = str(sslrootcert)
+        if sslcert:
+            env["PGSSLCERT"] = str(sslcert)
+        if sslkey:
+            env["PGSSLKEY"] = str(sslkey)
+        if passfile:
+            env["PGPASSFILE"] = str(passfile)
+        return args, (env or None)
+
+    def runshell(self, parameters):
+        sigint_handler = signal.getsignal(signal.SIGINT)
         try:
-            if keepdb and self._database_exists(cursor, parameters["dbname"]):
-                # If the database should be kept and it already exists, don't
-                # try to create a new one.
-                return
-            super()._execute_create_test_db(cursor, parameters, keepdb)
-        except Exception as e:
-            if getattr(e.__cause__, "pgcode", "") != errorcodes.DUPLICATE_DATABASE:
-                # All errors except "database already exists" cancel tests.
-                self.log("Got an error creating the test database: %s" % e)
-                sys.exit(2)
-            elif not keepdb:
-                # If the database should be kept, ignore "database already
-                # exists".
-                raise
-
-    def _clone_test_db(self, suffix, verbosity, keepdb=False):
-        # CREATE DATABASE ... WITH TEMPLATE ... requires closing connections
-        # to the template database.
-        self.connection.close()
-
-        source_database_name = self.connection.settings_dict["NAME"]
-        target_database_name = self.get_test_db_clone_settings(suffix)["NAME"]
-        test_db_params = {
-            "dbname": self._quote_name(target_database_name),
-            "suffix": self._get_database_create_suffix(template=source_database_name),
-        }
-        with self._nodb_cursor() as cursor:
-            try:
-                self._execute_create_test_db(cursor, test_db_params, keepdb)
-            except Exception:
-                try:
-                    if verbosity >= 1:
-                        self.log(
-                            "Destroying old test database for alias %s..."
-                            % (
-                                self._get_database_display_str(
-                                    verbosity, target_database_name
-                                ),
-                            )
-                        )
-                    cursor.execute("DROP DATABASE %(dbname)s" % test_db_params)
-                    self._execute_create_test_db(cursor, test_db_params, keepdb)
-                except Exception as e:
-                    self.log("Got an error cloning the test database: %s" % e)
-                    sys.exit(2)
+            # Allow SIGINT to pass to psql to abort queries.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            super().runshell(parameters)
+        finally:
+            # Restore the original SIGINT handler.
+            signal.signal(signal.SIGINT, sigint_handler)
