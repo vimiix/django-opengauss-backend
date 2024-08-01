@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='django-opengauss-backend',
-    version='0.4.0',
+    version='0.4.1',
     description='openGauss database dialect for django',
     long_description=open("README.md").read(),
     long_description_content_type='text/markdown',
